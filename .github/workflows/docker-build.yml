@@ -10,6 +10,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # ▼▼▼▼▼▼▼▼▼▼ 新增步骤：清理磁盘空间 ▼▼▼▼▼▼▼▼▼▼
+      # 这步非常关键，它会删除预装的 Android SDK, .NET 等大文件
+      # 能释放约 10GB+ 空间，防止构建 ARM 镜像时磁盘爆满
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space-action@v1.3.1
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: false
+      # ▲▲▲▲▲▲▲▲▲▲ 清理结束 ▲▲▲▲▲▲▲▲▲▲
+
       - name: Checkout code
         uses: actions/checkout@v4
 
@@ -19,21 +34,20 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # ▼▼▼▼▼▼▼▼▼▼ 自动下载模型文件 ▼▼▼▼▼▼▼▼▼▼
+      # 使用 Python 脚本下载模型
       - name: Download Embedding Model
         run: |
           echo "Installing library..."
           pip install huggingface_hub
           
           echo "Starting download using Python script..."
-          # 使用 Python 直接调用库函数，避开 "command not found" 问题
           python -c "
           from huggingface_hub import snapshot_download
           import os
 
           # 定义参数
           repo_id = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
-          # 注意：这里写死目标路径，确保和 Dockerfile COPY 的路径一致
+          # 确保路径与 Dockerfile 里的 COPY 路径一致
           local_dir = './backend/embedding/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2'
 
           print(f'Downloading {repo_id} to {local_dir}...')
@@ -42,8 +56,8 @@ jobs:
           snapshot_download(
               repo_id=repo_id,
               local_dir=local_dir,
-              local_dir_use_symlinks=False, # 关键：不用软链接，下载实体现文件
-              ignore_patterns=['*.h5', '*.ot', '*.msgpack'] # 忽略非必要的大文件，只下 safetensors
+              local_dir_use_symlinks=False, 
+              ignore_patterns=['*.h5', '*.ot', '*.msgpack'] 
           )
           print('Download finished successfully!')
           "
@@ -65,3 +79,6 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/mumuainovel:latest
+          # 暂时关闭缓存写入，以节省空间和时间
+          # cache-from: type=gha
+          # cache-to: type=gha,mode=max
