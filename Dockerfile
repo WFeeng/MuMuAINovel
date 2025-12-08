@@ -32,9 +32,10 @@ WORKDIR /app
 RUN sed -i 's/deb.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources \
     && sed -i 's/security.debian.org/mirrors.aliyun.com/g' /etc/apt/sources.list.d/debian.sources
 
-# 安装系统依赖
-RUN apt-get update && apt-get install -y \
+# 1 安装系统依赖, 删除缓存
+RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
 # 复制后端依赖文件
@@ -45,6 +46,9 @@ RUN pip install --no-cache-dir torch==2.7.0 --index-url https://download.pytorch
 
 # 再安装其他Python依赖（使用阿里云镜像加速）
 RUN pip install --no-cache-dir -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/
+
+# 2 卸载不再需要的编译工具
+RUN apt-get purge -y --auto-remove gcc g++
 
 # 复制后端代码（包含embedding模型）
 COPY backend/ ./
