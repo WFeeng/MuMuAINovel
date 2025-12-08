@@ -10,19 +10,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ▼▼▼▼▼▼▼▼▼▼ 新增步骤：清理磁盘空间 ▼▼▼▼▼▼▼▼▼▼
-      # 这步非常关键，它会删除预装的 Android SDK, .NET 等大文件
-      # 能释放约 10GB+ 空间，防止构建 ARM 镜像时磁盘爆满
-      - name: Free Disk Space (Ubuntu)
-        uses: jlumbroso/free-disk-space-action@v1.3.1
-        with:
-          tool-cache: false
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: true
-          docker-images: true
-          swap-storage: false
+      # ▼▼▼▼▼▼▼▼▼▼ 使用原生命令清理磁盘 (更稳健) ▼▼▼▼▼▼▼▼▼▼
+      - name: Free Disk Space (Manual)
+        run: |
+          echo "Before cleanup:"
+          df -h
+          
+          # 删除占用巨大的预装软件
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          
+          echo "After cleanup:"
+          df -h
       # ▲▲▲▲▲▲▲▲▲▲ 清理结束 ▲▲▲▲▲▲▲▲▲▲
 
       - name: Checkout code
@@ -34,7 +36,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 使用 Python 脚本下载模型
+      # 下载模型 (Python 脚本方案)
       - name: Download Embedding Model
         run: |
           echo "Installing library..."
@@ -79,6 +81,3 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/mumuainovel:latest
-          # 暂时关闭缓存写入，以节省空间和时间
-          # cache-from: type=gha
-          # cache-to: type=gha,mode=max
