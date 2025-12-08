@@ -1,0 +1,53 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ▼▼▼▼▼▼▼▼▼▼ 自动下载模型文件 ▼▼▼▼▼▼▼▼▼▼
+      - name: Download Embedding Model
+        run: |
+          pip install huggingface_hub
+          
+          # 目标路径：代码默认读取的路径
+          TARGET_DIR="./backend/embedding/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2"
+          mkdir -p $TARGET_DIR
+          
+          echo "正在下载模型..."
+          # 下载所有文件，不遗漏任何一个配置文件
+          huggingface-cli download sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2 \
+            --local-dir $TARGET_DIR \
+            --local-dir-use-symlinks False
+            
+          echo "下载完成，清单如下："
+          ls -lh $TARGET_DIR
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ secrets.DOCKERHUB_USERNAME }}/mumuainovel:latest
