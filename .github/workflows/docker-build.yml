@@ -10,74 +10,79 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ▼▼▼▼▼▼▼▼▼▼ 使用原生命令清理磁盘 (更稳健) ▼▼▼▼▼▼▼▼▼▼
+      # 1. 【关键】清理磁盘空间
+      # 构建 ARM 镜像非常消耗空间，必须先删除预装的 Android/dotnet 等环境
+      # 这能释放约 10GB+ 空间，防止构建失败
       - name: Free Disk Space (Manual)
         run: |
           echo "Before cleanup:"
           df -h
-          
-          # 删除占用巨大的预装软件
           sudo rm -rf /usr/share/dotnet
           sudo rm -rf /usr/local/lib/android
           sudo rm -rf /opt/ghc
           sudo rm -rf /opt/hostedtoolcache/CodeQL
           sudo docker image prune --all --force
-          
           echo "After cleanup:"
           df -h
-      # ▲▲▲▲▲▲▲▲▲▲ 清理结束 ▲▲▲▲▲▲▲▲▲▲
 
+      # 2. 拉取代码 (此时下来的 model.safetensors 只有 1KB)
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # 3. 设置 QEMU (ARM 构建必备)
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
+      # 4. 设置 Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 下载模型 (Python 脚本方案)
-      - name: Download Embedding Model
+      # ========================================================
+      # ▼▼▼▼▼▼▼▼▼▼ 核心步骤：替换模型文件 ▼▼▼▼▼▼▼▼▼▼
+      # ========================================================
+      - name: Replace Stub with Real Model
         run: |
-          echo "Installing library..."
-          pip install huggingface_hub
+          # 定义具体的目录路径 (Git LFS 的 snapshot 目录)
+          TARGET_DIR="./backend/embedding/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2/snapshots/86741b4e3f5cb7765a600d3a3d55a0f6a6cb443d"
+          TARGET_FILE="$TARGET_DIR/model.safetensors"
           
-          echo "Starting download using Python script..."
-          python -c "
-          from huggingface_hub import snapshot_download
-          import os
-
-          # 定义参数
-          repo_id = 'sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2'
-          # 确保路径与 Dockerfile 里的 COPY 路径一致
-          local_dir = './backend/embedding/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2'
-
-          print(f'Downloading {repo_id} to {local_dir}...')
+          # 你的 GitHub Release 下载地址
+          DOWNLOAD_URL="https://github.com/WFeeng/MuMuAINovel/releases/download/v1.0-model/model.safetensors"
           
-          # 执行下载
-          snapshot_download(
-              repo_id=repo_id,
-              local_dir=local_dir,
-              local_dir_use_symlinks=False, 
-              ignore_patterns=['*.h5', '*.ot', '*.msgpack'] 
-          )
-          print('Download finished successfully!')
-          "
+          echo "目标路径: $TARGET_DIR"
           
-          echo "验证下载结果："
-          ls -lh ./backend/embedding/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2
+          # 确保目录存在 (理论上 checkout 后是存在的，以防万一)
+          mkdir -p "$TARGET_DIR"
+          
+          echo "当前文件大小 (替换前):"
+          ls -lh "$TARGET_FILE" || echo "文件不存在"
+          
+          echo "正在从 GitHub Release 下载并覆盖..."
+          wget -q -O "$TARGET_FILE" "$DOWNLOAD_URL"
+          
+          echo "替换完成！当前文件大小 (应为 400MB+):"
+          ls -lh "$TARGET_FILE"
+      # ========================================================
+      # ▲▲▲▲▲▲▲▲▲▲ 核心步骤结束 ▲▲▲▲▲▲▲▲▲▲
+      # ========================================================
 
+      # 5. 登录 Docker Hub
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
+      # 6. 构建并推送
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
           push: true
+          # 同时构建 AMD64 和 ARM64
           platforms: linux/amd64,linux/arm64
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/mumuainovel:latest
+          # 建议暂时关闭缓存，确保真文件被打包进去
+          # cache-from: type=gha
+          # cache-to: type=gha,mode=max
