@@ -1,8 +1,16 @@
 name: Build and Push Docker Image
 
 on:
+  # 监听代码推送事件 (包含自动同步产生的新提交)
   push:
     branches: [ "main", "master" ]
+    # 【优化】忽略文档修改，只有代码变动才构建
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+  
+  # 允许手动触发
   workflow_dispatch:
 
 jobs:
@@ -10,9 +18,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. 【关键】清理磁盘空间
-      # 构建 ARM 镜像非常消耗空间，必须先删除预装的 Android/dotnet 等环境
-      # 这能释放约 10GB+ 空间，防止构建失败
+      # 1. 清理磁盘空间 (ARM 构建必备)
       - name: Free Disk Space (Manual)
         run: |
           echo "Before cleanup:"
@@ -25,24 +31,22 @@ jobs:
           echo "After cleanup:"
           df -h
 
-      # 2. 拉取代码 (此时下来的 model.safetensors 只有 1KB)
+      # 2. 拉取代码
       - name: Checkout code
         uses: actions/checkout@v4
 
-      # 3. 设置 QEMU (ARM 构建必备)
+      # 3. 设置 QEMU
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      # 4. 设置 Buildx
+      # 4. 设置 Docker Buildx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # ========================================================
-      # ▼▼▼▼▼▼▼▼▼▼ 核心步骤：替换模型文件 ▼▼▼▼▼▼▼▼▼▼
-      # ========================================================
+      # 5. 【核心】替换模型文件 (使用 Release 下载方案)
       - name: Replace Stub with Real Model
         run: |
-          # 定义具体的目录路径 (Git LFS 的 snapshot 目录)
+          # 目标路径
           TARGET_DIR="./backend/embedding/models--sentence-transformers--paraphrase-multilingual-MiniLM-L12-v2/snapshots/86741b4e3f5cb7765a600d3a3d55a0f6a6cb443d"
           TARGET_FILE="$TARGET_DIR/model.safetensors"
           
@@ -50,39 +54,27 @@ jobs:
           DOWNLOAD_URL="https://github.com/WFeeng/MuMuAINovel/releases/download/v1.0-model/model.safetensors"
           
           echo "目标路径: $TARGET_DIR"
-          
-          # 确保目录存在 (理论上 checkout 后是存在的，以防万一)
           mkdir -p "$TARGET_DIR"
-          
-          echo "当前文件大小 (替换前):"
-          ls -lh "$TARGET_FILE" || echo "文件不存在"
           
           echo "正在从 GitHub Release 下载并覆盖..."
           wget -q -O "$TARGET_FILE" "$DOWNLOAD_URL"
           
-          echo "替换完成！当前文件大小 (应为 400MB+):"
+          echo "替换完成！当前文件大小:"
           ls -lh "$TARGET_FILE"
-      # ========================================================
-      # ▲▲▲▲▲▲▲▲▲▲ 核心步骤结束 ▲▲▲▲▲▲▲▲▲▲
-      # ========================================================
 
-      # 5. 登录 Docker Hub
+      # 6. 登录 Docker Hub
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 6. 构建并推送
+      # 7. 构建并推送
       - name: Build and push
         uses: docker/build-push-action@v5
         with:
           context: .
           file: ./Dockerfile
           push: true
-          # 同时构建 AMD64 和 ARM64
           platforms: linux/amd64,linux/arm64
           tags: ${{ secrets.DOCKERHUB_USERNAME }}/mumuainovel:latest
-          # 建议暂时关闭缓存，确保真文件被打包进去
-          # cache-from: type=gha
-          # cache-to: type=gha,mode=max
